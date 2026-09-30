@@ -1,66 +1,219 @@
-import streamlit as st
+import os
 import pickle
 import numpy as np
+import streamlit as st
+
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-# ------------------------------
-# Load saved files
-# ------------------------------
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+
+st.set_page_config(
+    page_title="LSTM Next Word Prediction",
+    page_icon="🧠",
+    layout="centered"
+)
+
+
+# ============================================================
+# FILE PATH
+# ============================================================
+
+# This makes the app work both locally and on Streamlit Cloud.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+MODEL_PATH = os.path.join(BASE_DIR, "lstm_model.h5")
+TOKENIZER_PATH = os.path.join(BASE_DIR, "tokenizer.pkl")
+MAX_LEN_PATH = os.path.join(BASE_DIR, "max_len.pkl")
+
+
+# ============================================================
+# LOAD MODEL, TOKENIZER AND MAX LENGTH
+# ============================================================
+
 @st.cache_resource
 def load_resources():
-    model = load_model("lstm_model.h5")
-    with open("tokenizer.pkl", "rb") as f:
+
+    # Load trained LSTM model
+    model = load_model(MODEL_PATH)
+
+    # Load tokenizer
+    with open(TOKENIZER_PATH, "rb") as f:
         tokenizer = pickle.load(f)
-    with open("max_len.pkl", "rb") as f:
+
+    # Load maximum sequence length
+    with open(MAX_LEN_PATH, "rb") as f:
         max_len = pickle.load(f)
+
     return model, tokenizer, max_len
 
-model, tokenizer, max_len = load_resources()
 
-# ------------------------------
-# Prediction function
-# ------------------------------
+# ============================================================
+# LOAD RESOURCES
+# ============================================================
+
+try:
+
+    model, tokenizer, max_len = load_resources()
+
+except Exception as e:
+
+    st.error("❌ Error loading the model or supporting files.")
+
+    st.write("Please check that these files exist inside the RNN folder:")
+
+    st.code(
+        """
+lstm_model.h5
+tokenizer.pkl
+max_len.pkl
+        """
+    )
+
+    st.exception(e)
+
+    st.stop()
+
+
+# ============================================================
+# FUNCTION TO PREDICT NEXT WORD
+# ============================================================
+
 def predict_next_word(text):
+
+    # Convert text into integer sequence
     sequence = tokenizer.texts_to_sequences([text])[0]
 
-    # Make the input exactly 745 tokens
+    # Check whether words were recognized
+    if len(sequence) == 0:
+        return ""
+
+    # Make sequence exactly the same length
+    # that was used during model training.
     sequence = pad_sequences(
         [sequence],
         maxlen=max_len,
-        padding='pre',
-        truncating='pre'
+        padding="pre",
+        truncating="pre"
     )
 
-    preds = model.predict(sequence, verbose=0)
+    # Predict
+    prediction = model.predict(
+        sequence,
+        verbose=0
+    )
 
-    predicted_id = np.argmax(preds, axis=-1)[0]
+    # Get word ID having highest probability
+    predicted_id = np.argmax(
+        prediction[0]
+    )
 
+    # Convert ID back to word
     for word, index in tokenizer.word_index.items():
+
         if index == predicted_id:
             return word
 
     return ""
 
-# ------------------------------
-# Streamlit UI
-# ------------------------------
-st.set_page_config(page_title="Next Word Prediction", layout="centered")
 
-st.title("🧠 Next Word Prediction (LSTM)")
-st.write("Enter a sentence and the model will predict the **next word**.")
+# ============================================================
+# FUNCTION TO GENERATE MULTIPLE WORDS
+# ============================================================
 
-user_input = st.text_input("✍️ Enter text:", placeholder="Type a sentence here...")
+def generate_text(seed_text, num_words=10):
 
-if st.button("Predict Next Word"):
-    if user_input.strip() == "":
-        st.warning("Please enter some text.")
+    generated_text = seed_text.strip()
+
+    for _ in range(num_words):
+
+        next_word = predict_next_word(generated_text)
+
+        # Stop if no word is predicted
+        if not next_word:
+            break
+
+        # Add predicted word
+        generated_text += " " + next_word
+
+    return generated_text
+
+
+# ============================================================
+# STREAMLIT USER INTERFACE
+# ============================================================
+
+st.title("🧠 LSTM Next Word Prediction")
+
+st.write(
+    "Enter some text and the trained LSTM model will predict "
+    "the next words."
+)
+
+
+# ============================================================
+# TEXT INPUT
+# ============================================================
+
+user_text = st.text_input(
+    "Enter your starting text:",
+    placeholder="Example: are you a"
+)
+
+
+# ============================================================
+# NUMBER OF WORDS
+# ============================================================
+
+num_words = st.number_input(
+    "Number of words to generate:",
+    min_value=1,
+    max_value=20,
+    value=10,
+    step=1
+)
+
+
+# ============================================================
+# PREDICTION BUTTON
+# ============================================================
+
+if st.button("🚀 Generate Text"):
+
+    if user_text.strip() == "":
+
+        st.warning("⚠️ Please enter some starting text.")
+
     else:
-        next_word = predict_next_word(user_input)
-        st.success(f"**Predicted Next Word:** {next_word}")
 
-# ------------------------------
-# Footer
-# ------------------------------
-st.markdown("---")
-st.caption("LSTM-based Next Word Prediction using Streamlit")
+        with st.spinner("Generating text..."):
+
+            result = generate_text(
+                user_text,
+                int(num_words)
+            )
+
+        st.subheader("Generated Text")
+
+        st.success(result)
+
+
+# ============================================================
+# MODEL INFORMATION
+# ============================================================
+
+with st.expander("ℹ️ Model Information"):
+
+    st.write("**Model:** LSTM")
+
+    st.write(
+        f"**Maximum sequence length:** {max_len}"
+    )
+
+    st.write(
+        f"**Vocabulary size:** {len(tokenizer.word_index) + 1}"
+    )
